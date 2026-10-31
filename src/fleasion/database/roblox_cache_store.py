@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import gzip
-import hashlib
+import hashl    # CSGPHS8 has its own Zstandard frame after the clear-text format header.
+    # Identify the container before treating that inner frame as a generic wrapper.
+    if payload.startswith(b'CSGPHS'):
+        return 'csgphs'
+ib
 import html
 import io
 import json
@@ -556,8 +560,6 @@ def detect_roblox_payload_kind(payload: bytes, *, url: str = '') -> str:
         return 'video-manifest'
     if re.search(rb'(?im)^\s*roblox-assettypeid\s*:\s*\d+\s*$', payload[:4096]):
         return 'asset-metadata'
-    if payload.startswith(b'CSGPHS'):
-        return 'csgphs'
     if payload.startswith((b'\x00\x01\x00\x00', b'OTTO', b'ttcf', b'wOFF', b'wOF2')):
         return 'font'
     if payload[:8] == b'<roblox!':
