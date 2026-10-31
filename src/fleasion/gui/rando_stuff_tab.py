@@ -1438,13 +1438,13 @@ class RandoStuffTab(QWidget):
         ) or "No types detected"
         message = (
             f"Dumped {report['file_count']:,} file(s), "
-            f"{report['total_bytes']:,} bytes.\\n\\n"
-            f"Detected types: {types_text}\\n\\n"
+            f"{report['total_bytes']:,} bytes.\n\n"
+            f"Detected types: {types_text}\n\n"
             f"Output: {output}"
         )
         errors = report.get("errors", [])
         if errors:
-            message += f"\\n\\nSkipped {len(errors):,} file(s): " + " | ".join(errors[:5])
+            message += f"\n\nSkipped {len(errors):,} file(s): " + " | ".join(errors[:5])
         self._hash_asset_status.setText(
             f"Dump complete: {report['file_count']:,} file(s) in {output}"
         )
