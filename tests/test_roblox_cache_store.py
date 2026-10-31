@@ -597,7 +597,7 @@ def test_wrapped_zstd_prefix_is_decompressed_and_detected_as_csgphs(tmp_path):
     assert 'Geometry type ID: 2' in preview
     assert 'Convex hulls: 1' in preview
     assert 'Vertices: 10' in preview
-    assert 'Triangles: 5' in preview
+    assert 'triangles: 5' in preview
     assert 'Body layout: complete' in preview
 
     source = tmp_path / 'wrapped.zst'
