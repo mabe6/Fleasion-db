@@ -287,17 +287,20 @@ def test_recovery_never_overwrites_a_nonempty_current_default(tmp_path):
     archived_path.write_bytes(archived_default)
 
     class FakeConfigManager:
-        configs_folder = configs_dir
+        def __init__(self, folder):
+            self.configs_folder = folder
 
         @property
         def config_names(self):
-            return sorted(path.stem for path in configs_dir.glob('*.json'))
+            return sorted(path.stem for path in self.configs_folder.glob('*.json'))
 
         def get_replacement_rules(self, name):
-            data = json.loads((configs_dir / f'{name}.json').read_text(encoding='utf-8'))
+            path = self.configs_folder / f'{name}.json'
+            data = json.loads(path.read_text(encoding='utf-8'))
             return data.get('replacement_rules', [])
 
-    host = type('WindowHost', (), {'config_manager': FakeConfigManager()})()
+    host = type('WindowHost', (), {})()
+    host.config_manager = FakeConfigManager(configs_dir)
     ReplacerConfigWindow._restore_archived_default_profile(host, {'Legacy Default'})
 
     assert default_path.read_bytes() == current_default
