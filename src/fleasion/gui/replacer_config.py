@@ -879,8 +879,85 @@ class ReplacerConfigWindow(QDialog):
         escape_shortcut = QShortcut(QKeySequence('Escape'), self)
         escape_shortcut.activated.connect(self.close)
 
+    def _restore_archived_default_profile(self, hidden: set[str]) -> None:
+        """Restore a Default profile archived by an earlier migration build.
+
+        The old migration moved the user's original Default.json to
+        "Legacy Default.json" and created a blank Default.json. Restore the
+        original file when that exact pattern is detected. The generated empty
+        file is moved into a hidden recovery folder first, so no bytes are lost.
+        """
+        names = self.config_manager.config_names
+        archived_names = [
+            name for name in names
+            if re.fullmatch(r'Legacy Default(?: \(\d+\))?', name)
+        ]
+        populated_archives = []
+        for name in archived_names:
+            try:
+                if self.config_manager.get_replacement_rules(name):
+                    populated_archives.append(name)
+            except Exception:
+                continue
+
+        # Do not guess when multiple possible original Default profiles exist.
+        if len(populated_archives) != 1:
+            return
+
+        try:
+            if self.config_manager.get_replacement_rules('Default'):
+                # A user may already have added new rules to the current Default.
+                # Never overwrite it, even when an archived profile also exists.
+                return
+        except Exception:
+            # A damaged/invalid generated Default is still preserved byte-for-byte
+            # below before attempting to restore the known populated archive.
+            pass
+
+        archive_name = populated_archives[0]
+        default_path = self.config_manager.configs_folder / 'Default.json'
+        backup_path: Path | None = None
+
+        if default_path.exists():
+            backup_dir = self.config_manager.configs_folder / '.migration-backups'
+            try:
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                backup_path = backup_dir / 'Default.generated-empty.json'
+                suffix = 2
+                while backup_path.exists():
+                    backup_path = backup_dir / f'Default.generated-empty ({suffix}).json'
+                    suffix += 1
+                default_path.rename(backup_path)
+            except OSError:
+                # If we cannot preserve the current file, do not alter either profile.
+                return
+
+            # Invalidate ConfigManager's filename and data caches without calling
+            # refresh_config_names(), which would create another empty Default.
+            self.config_manager._config_data_cache.pop('Default', None)
+            self.config_manager._config_names_cache = None
+            self.config_manager._config_names_signature = None
+
+        if not self.config_manager.rename_config(archive_name, 'Default'):
+            if backup_path is not None:
+                try:
+                    backup_path.rename(default_path)
+                except OSError:
+                    pass
+                self.config_manager._config_data_cache.pop('Default', None)
+                self.config_manager._config_names_cache = None
+                self.config_manager._config_names_signature = None
+            return
+
+        hidden.discard(archive_name)
+        log_buffer.log(
+            'Config',
+            'Restored the original Default Replacer profile. The generated empty Default '
+            'was preserved in configs/.migration-backups/.',
+        )
+
     def _initialize_legacy_profile_visibility(self) -> None:
-        """Archive old Asset-ID profiles while keeping a clean active Default."""
+        """Hide old Asset-ID profiles without moving or replacing their JSON files."""
         settings = self.config_manager.settings
         key = 'hidden_legacy_replacer_configs'
         hidden_value = settings.get(key, [])
@@ -888,44 +965,26 @@ class ReplacerConfigWindow(QDialog):
             str(name) for name in hidden_value
         } if isinstance(hidden_value, list) else set()
 
-        # Earlier migration builds left Default visible. Preserve its rules so
-        # they remain available for conversion in Miscellaneous.
-        migration_key = 'legacy_default_replacer_archived_v1'
-        if not settings.get(migration_key, False):
-            if 'Default' in self.config_manager.config_names:
-                try:
-                    default_rules = self.config_manager.get_replacement_rules('Default')
-                except Exception:
-                    default_rules = []
-                if default_rules:
-                    archive_name = 'Legacy Default'
-                    suffix = 2
-                    while archive_name in self.config_manager.config_names:
-                        archive_name = f'Legacy Default ({suffix})'
-                        suffix += 1
-                    if self.config_manager.rename_config('Default', archive_name):
-                        hidden.add(archive_name)
-                        created = self.config_manager.create_config('Default')
-                        settings['last_config'] = 'Default'
-                        settings[migration_key] = bool(created)
-                    else:
-                        # Retry on a later launch if the old profile could not be archived.
-                        settings[migration_key] = False
-                else:
-                    settings[migration_key] = True
+        # Repair installations affected by the earlier "Legacy Default" migration.
+        # This is deliberately conservative: it restores only one unambiguous,
+        # populated archived Default, and preserves the empty generated file.
+        self._restore_archived_default_profile(hidden)
 
-        # An upgraded installation may contain only legacy JSON files and no
-        # active Default profile. Keep one visible destination profile so the
-        # hidden-profile fallback can never expose a legacy profile again.
+        # Keep the original Default.json at its original path. The hash-based
+        # Replacer has its own isolated HashReplacer/configs directory, so there
+        # is no need to rename the Asset-ID Default or replace it with an empty one.
+        settings['legacy_default_replacer_archived_v1'] = True
+
+        # ConfigManager already creates Default only when the config folder has
+        # no profiles at all. Never replace an existing Default here.
         if 'Default' not in self.config_manager.config_names:
-            self.config_manager.create_config('Default')
-            settings['last_config'] = 'Default'
+            if self.config_manager.create_config('Default'):
+                settings['last_config'] = 'Default'
 
         visibility_marker = 'legacy_replacer_visibility_initialized_v1'
         if not settings.get(visibility_marker, False):
-            # ConfigManager may already provide an empty default list for this
-            # setting. Use an explicit version marker to recognize first launch
-            # after this migration, independent of defaults injected at startup.
+            # Preserve the existing files and hide other legacy profiles from the
+            # normal editor by default. They remain available for conversion.
             hidden.update(
                 name for name in self.config_manager.config_names
                 if name != 'Default'
