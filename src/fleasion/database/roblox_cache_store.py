@@ -454,7 +454,7 @@ def _looks_like_json_prefix(payload: bytes) -> bool:
 
 
 def format_csgphs_preview(payload: bytes) -> str:
-    """Summarise the public CSGPHS collision-mesh header without guessing its geometry."""
+    """Summarise the CSGPHS collision-mesh header and its decoded v8 geometry metadata."""
     if not payload.startswith(b'CSGPHS') or len(payload) < 10:
         return f'Unrecognised CSGPHS payload · {len(payload):,} bytes'
     version = struct.unpack_from('<I', payload, 6)[0]
@@ -466,16 +466,35 @@ def format_csgphs_preview(payload: bytes) -> str:
     if version != 8:
         lines.append('This version is recognised, but its geometry layout is not decoded by this preview.')
         return '\n'.join(lines)
-    if len(payload) < 72:
+    if len(payload) < 12:
         lines.append('The version 8 header is truncated; geometry metadata is unavailable.')
         return '\n'.join(lines)
-    values = struct.unpack_from('<9I6f', payload, 12)
+
+    geometry_type = payload[10]
+    mesh_frame = payload[12:]
+    if not mesh_frame.startswith(_ZSTD_MAGIC):
+        lines.append('The CSGPHS8 header is present, but its inner Zstandard mesh frame is missing or unrecognised.')
+        return '\n'.join(lines)
+    try:
+        mesh_data = decompress_roblox_payload(mesh_frame)
+    except RobloxCacheError as exc:
+        lines.append(f'Could not decompress the inner CSGPHS8 mesh frame: {exc}')
+        return '\n'.join(lines)
+    if len(mesh_data) < 72:
+        lines.append(
+            f'The decompressed CSGPHS8 mesh header is truncated ({len(mesh_data):,} of at least 72 bytes).'
+        )
+        return '\n'.join(lines)
+
+    values = struct.unpack_from('<9I6f', mesh_data, 0)
     (
         hull_count, total_vertices, total_faces, first_hull_vertices, first_hull_faces,
         raw_geometry_size, clers_bit_count, clers_buffer_size, vertices_size,
         min_x, min_y, min_z, max_x, max_y, max_z,
     ) = values
     lines.extend([
+        f'Geometry type ID: {geometry_type}',
+        f'Inner decompressed mesh data: {len(mesh_data):,} bytes',
         f'Convex hulls: {hull_count:,}',
         f'Vertices: {total_vertices:,} · triangles: {total_faces:,}',
         f'First hull: {first_hull_vertices:,} vertices · {first_hull_faces:,} faces',
@@ -486,7 +505,7 @@ def format_csgphs_preview(payload: bytes) -> str:
     ])
     expected_size = 72 + raw_geometry_size + clers_buffer_size + vertices_size
     lines.append(
-        f'Body layout: {"complete" if expected_size <= len(payload) else "truncated or has extra data"} '
+        f'Body layout: {"complete" if expected_size <= len(mesh_data) else "truncated or has extra data"} '
         f'· header-derived size {expected_size:,} bytes'
     )
     lines.append('The current viewer reports collision geometry metadata; it does not yet reconstruct the CSGPHS8 hulls as a 3D model.')

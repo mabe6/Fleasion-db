@@ -569,38 +569,48 @@ def test_hls_playlist_and_video_metadata_are_not_asset_ids() -> None:
 def test_wrapped_zstd_prefix_is_decompressed_and_detected_as_csgphs(tmp_path):
     import zstandard
 
-    csg_header = (
-        b'CSGPHS'
-        + struct.pack('<I', 8)
-        + b'\x00\x00'
-        + struct.pack(
-            '<9I6f',
-            1, 10, 5, 10, 5, 0, 0, 0, 120,
-            -1.0, -2.0, -3.0, 1.0, 2.0, 3.0,
-        )
-    )
-    csg_payload = csg_header + bytes(120)
+    # CSGPHS8 stores a small clear-text header followed by an inner Zstandard
+    # frame containing the geometry metadata and streams.
+    raw_mesh = struct.pack(
+        '<9I6f',
+        1, 10, 5, 10, 5, 0, 0, 0, 120,
+        -1.0, -2.0, -3.0, 1.0, 2.0, 3.0,
+    ) + bytes(120)
     compressor = zstandard.ZstdCompressor()
-    # Deliberately split into two frames to exercise read_across_frames=True.
-    compressed = (
-        compressor.compress(csg_payload[:72])
-        + compressor.compress(csg_payload[72:])
+    inner_mesh_frame = compressor.compress(raw_mesh)
+    csg_payload = b'CSGPHS' + struct.pack('<I', 8) + b'\x02\x00' + inner_mesh_frame
+
+    # Roblox's cache may also wrap the complete CSGPHS8 resource in an outer
+    # Zstandard response frame, here deliberately split across two frames.
+    outer_compressed = (
+        compressor.compress(csg_payload[:20])
+        + compressor.compress(csg_payload[20:])
     )
-    wrapped = b'\x7b\x29\xbe\x18\x00\x00\xb4\x18\x00\x00' + compressed
+    wrapped = b'\x7b\x29\xbe\x18\x00\x00\xb4\x18\x00\x00' + outer_compressed
 
     assert store_module.is_roblox_compressed_payload(wrapped)
     assert decompress_roblox_payload(wrapped) == csg_payload
     assert detect_roblox_payload_kind(wrapped) == 'csgphs'
+
     preview = store_module.format_csgphs_preview(csg_payload)
     assert 'CSGPHS version 8' in preview
+    assert 'Geometry type ID: 2' in preview
     assert 'Convex hulls: 1' in preview
     assert 'Vertices: 10' in preview
+    assert 'Triangles: 5' in preview
+    assert 'Body layout: complete' in preview
 
     source = tmp_path / 'wrapped.zst'
     destination = tmp_path / 'decoded.bin'
     source.write_bytes(wrapped)
     decompress_roblox_payload_file(source, destination)
     assert destination.read_bytes() == csg_payload
+
+
+def test_csgphs8_preview_rejects_missing_inner_zstd_frame() -> None:
+    payload = b'CSGPHS' + struct.pack('<I', 8) + b'\x00\x00' + b'not-a-zstd-frame'
+    preview = store_module.format_csgphs_preview(payload)
+    assert 'inner Zstandard mesh frame is missing' in preview
 
 
 def test_roblox_asset_type_header_exposes_image_body_for_preview():
