@@ -40,6 +40,15 @@ if TYPE_CHECKING:
     from .addons.cache_scraper import CacheScraper
     from .addons.texture_stripper import TextureStripper
 
+from .asset_batch import (
+    EMPTY_V3_RESPONSE,
+    V3Batch,
+    from_v1,
+    is_batch_request,
+    is_v3_request,
+    to_v1,
+    unwrap_response,
+)
 from .roblox_metadata import strip_roblox_metadata
 from .upstream import (
     AutoConnector,
@@ -2508,7 +2517,9 @@ class FleasionProxy:
                     _log_entry,
                     hold=self._intercept_all_hosts and self._intercept_matches(host, path),
                 )
-                is_batch = host == ASSET_DELIVERY_HOST and b'/v1/assets/batch' in req_first
+                is_batch = host == ASSET_DELIVERY_HOST and is_batch_request(req_first)
+                is_v3_batch = is_batch and is_v3_request(req_first)
+                v3_batch: Optional[V3Batch] = None
                 bypass_custom_fflags = (
                     req_headers.get(_BROWSER_BYPASS_CUSTOM_FFLAGS_HEADER, b'').strip() == b'1'
                 )
@@ -2630,6 +2641,12 @@ class FleasionProxy:
                 if is_batch:
                     # Decompress for reading/modifying, send uncompressed to upstream
                     req_body_plain = _decompress_body(req_body_raw, req_headers)
+                    # The addons only understand the v1 list body, so flatten v3 first
+                    batch_body = req_body_plain
+                    if is_v3_batch:
+                        _converted = to_v1(req_body_plain)
+                        if _converted is not None:
+                            batch_body, v3_batch = _converted
                     # Unique ID for this specific batch request/response pair.
                     # Keyed into _pending as f'{batch_id}_{req_id}' so parallel
                     # connections using the same req_id integers don't collide —
@@ -2644,23 +2661,33 @@ class FleasionProxy:
                     # synchronously ensures _pending is populated before any CDN coroutine
                     # can check has_pending().
                     req_body_modified, scraper_body = self.texture_stripper.process_batch_request(
-                        req_body_plain,
+                        batch_body,
                         req_headers,
                         replacements_tuple,
                         batch_id,
                     )
                     if _is_empty_json_array(req_body_modified) and not _is_empty_json_array(
-                        req_body_plain
+                        batch_body
                     ):
-                        writer.write(_make_local_response(200, b'[]'))
+                        writer.write(
+                            _make_local_response(
+                                200, EMPTY_V3_RESPONSE if v3_batch is not None else b'[]'
+                            )
+                        )
                         await writer.drain()
                         if not _keep_alive(req_first, req_headers):
                             break
                         continue
                     if not await ensure_upstream(path):
                         break
+                    # Hooks keep the v1 body, only the upstream request is rebuilt as v3
+                    upstream_batch_body = (
+                        from_v1(req_body_modified, v3_batch)
+                        if v3_batch is not None
+                        else req_body_modified
+                    )
                     up_writer.write(
-                        _build_modified_request(req_first, req_headers, req_body_modified)
+                        _build_modified_request(req_first, req_headers, upstream_batch_body)
                     )
                 elif host == GAMEJOIN_HOST:
                     # Module interceptors: allow request body/URL modification for gamejoin traffic
@@ -2818,6 +2845,8 @@ class FleasionProxy:
                 if is_batch:
                     # Batch response: forward raw to Roblox, decompress only for addon hooks
                     resp_body_plain = _decompress_body(resp_body_raw, resp_headers)
+                    if is_v3_batch:
+                        resp_body_plain = unwrap_response(resp_body_plain)
                     # Addon hooks must use req_body_modified (what we actually sent to
                     # upstream), NOT req_body_raw. The upstream response is index-aligned
                     # with the modified request. If assets were removed by process_batch_request

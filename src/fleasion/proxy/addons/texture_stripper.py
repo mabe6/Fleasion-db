@@ -1210,9 +1210,9 @@ class TextureStripper:
         try:
             data = _loads(body)
         except Exception:
-            return body
+            return body, body
         if not isinstance(data, list):
-            return body
+            return body, body
         self._register_batch(batch_id)
         # The server's tuple may have been read just before a UI config toggle.
         # Resolve it again after synchronizing the generation so this batch is
