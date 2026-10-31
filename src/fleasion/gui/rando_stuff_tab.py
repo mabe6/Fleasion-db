@@ -1509,10 +1509,24 @@ class RandoStuffTab(QWidget):
             return
         names = self._config.config_names
         hidden = set(self._config.settings.get("hidden_legacy_replacer_configs", []))
-        candidates = [name for name in names if name in hidden and name != "Default"]
+
+        # Default is the user's original Asset-ID profile unless they deliberately
+        # replace its rules. Keep it available to the legacy-to-hash converter;
+        # the hash-based Default lives in the separate HashReplacer store.
+        default_has_rules = False
+        try:
+            default_has_rules = bool(self._config.get_replacement_rules("Default"))
+        except Exception:
+            pass
+
+        candidates = (["Default"] if default_has_rules else []) + [
+            name for name in names if name in hidden and name != "Default"
+        ]
         # Also list explicitly selected profiles if the user has enabled their visibility.
         if not candidates:
-            candidates = [name for name in names if name != "Default"]
+            candidates = (["Default"] if default_has_rules else []) + [
+                name for name in names if name != "Default"
+            ]
         for name in candidates:
             self._legacy_config_combo.addItem(f"{name}.json", name)
         if not candidates:
