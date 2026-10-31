@@ -146,8 +146,14 @@ class SettingsTab(QWidget):
         self._container_layout.addWidget(self._build_appearance_section())
         if sys.platform.startswith('linux'):
             self._container_layout.addWidget(self._build_linux_client_section())
-        # HTTP interception is disabled in this local-cache-focused build, so hide
-        # the proxy transport settings instead of presenting controls that do nothing.
+        # HTTP interception is disabled in this local-cache-focused build, so hide the proxy
+        # transport settings instead of presenting controls that do nothing.  The section is
+        # still built because refresh_from_config() and the proxy handlers read its widgets
+        from .replacer_config import HTTP_PROXY_SUPPORT_AVAILABLE
+
+        proxy_section = self._build_proxy_section()
+        proxy_section.setVisible(HTTP_PROXY_SUPPORT_AVAILABLE)
+        self._container_layout.addWidget(proxy_section)
         self._container_layout.addWidget(self._build_local_cache_section())
         self._container_layout.addWidget(self._build_convenience_section())
         if sys.platform == 'darwin':
