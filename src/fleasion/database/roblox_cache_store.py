@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import gzip
-import hashl    # CSGPHS8 has its own Zstandard frame after the clear-text format header.
-    # Identify the container before treating that inner frame as a generic wrapper.
-    if payload.startswith(b'CSGPHS'):
-        return 'csgphs'
-ib
+import hashlib
 import html
 import io
 import json
@@ -518,6 +514,10 @@ def format_csgphs_preview(payload: bytes) -> str:
 
 def detect_roblox_payload_kind(payload: bytes, *, url: str = '') -> str:
     """Detect cache payload formats, including non-asset Roblox HTTP resources."""
+    # CSGPHS8 has its own Zstandard frame after the clear-text format header.
+    # Identify the container before treating that inner frame as a generic wrapper.
+    if payload.startswith(b'CSGPHS'):
+        return 'csgphs'
     # A few Roblox cache entries prepend a 8/10/12/16-byte size wrapper before Zstd.
     # Classify the decompressed content, not its arbitrary first byte (which may be '{').
     zstd_offset = _zstd_frame_offset(payload)
