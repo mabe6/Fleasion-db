@@ -480,9 +480,9 @@ def format_csgphs_preview(payload: bytes) -> str:
     except RobloxCacheError as exc:
         lines.append(f'Could not decompress the inner CSGPHS8 mesh frame: {exc}')
         return '\n'.join(lines)
-    if len(mesh_data) < 72:
+    if len(mesh_data) < 60:
         lines.append(
-            f'The decompressed CSGPHS8 mesh header is truncated ({len(mesh_data):,} of at least 72 bytes).'
+            f'The decompressed CSGPHS8 mesh header is truncated ({len(mesh_data):,} of at least 60 bytes).'
         )
         return '\n'.join(lines)
 
@@ -503,7 +503,7 @@ def format_csgphs_preview(payload: bytes) -> str:
         f'Vertex block: {vertices_size:,} bytes',
         f'Bounds: ({min_x:.4g}, {min_y:.4g}, {min_z:.4g}) → ({max_x:.4g}, {max_y:.4g}, {max_z:.4g})',
     ])
-    expected_size = 72 + raw_geometry_size + clers_buffer_size + vertices_size
+    expected_size = 60 + raw_geometry_size + clers_buffer_size + vertices_size
     lines.append(
         f'Body layout: {"complete" if expected_size <= len(mesh_data) else "truncated or has extra data"} '
         f'· header-derived size {expected_size:,} bytes'
