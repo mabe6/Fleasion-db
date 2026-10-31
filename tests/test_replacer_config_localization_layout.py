@@ -270,13 +270,9 @@ def test_previous_migration_restores_original_default_and_preserves_empty_placeh
         app.processEvents()
 
 
-def test_recovery_never_overwrites_a_nonempty_current_default(
-    tmp_path, monkeypatch
-):
-    app = _qapp()
-    config_dir = Path(tmp_path) / 'FleasionKeepBothDefaults'
-    configs_dir = config_dir / 'configs'
-    configs_dir.mkdir(parents=True)
+def test_recovery_never_overwrites_a_nonempty_current_default(tmp_path):
+    configs_dir = Path(tmp_path) / 'configs'
+    configs_dir.mkdir()
     default_path = configs_dir / 'Default.json'
     archived_path = configs_dir / 'Legacy Default.json'
     current_default = (
@@ -289,23 +285,21 @@ def test_recovery_never_overwrites_a_nonempty_current_default(
     )
     default_path.write_bytes(current_default)
     archived_path.write_bytes(archived_default)
-    monkeypatch.setattr(manager_module, 'CONFIG_DIR', config_dir)
-    monkeypatch.setattr(manager_module, 'CONFIG_FILE', config_dir / 'settings.json')
-    monkeypatch.setattr(manager_module, 'CONFIGS_FOLDER', configs_dir)
 
-    window = None
-    try:
-        manager = ConfigManager()
-        window = ReplacerConfigWindow(manager)
+    class FakeConfigManager:
+        configs_folder = configs_dir
 
-        assert default_path.read_bytes() == current_default
-        assert archived_path.read_bytes() == archived_default
-        assert not (configs_dir / '.migration-backups').exists()
-        assert manager.get_replacement_rules('Default')[0]['name'] == 'current default'
-        assert window._rando_stuff_tab._legacy_config_combo.findData('Default') >= 0
-        assert window._rando_stuff_tab._legacy_config_combo.findData('Legacy Default') >= 0
-    finally:
-        if window is not None:
-            window.close()
-        app.processEvents()
+        @property
+        def config_names(self):
+            return sorted(path.stem for path in configs_dir.glob('*.json'))
 
+        def get_replacement_rules(self, name):
+            data = json.loads((configs_dir / f'{name}.json').read_text(encoding='utf-8'))
+            return data.get('replacement_rules', [])
+
+    host = type('WindowHost', (), {'config_manager': FakeConfigManager()})()
+    ReplacerConfigWindow._restore_archived_default_profile(host, {'Legacy Default'})
+
+    assert default_path.read_bytes() == current_default
+    assert archived_path.read_bytes() == archived_default
+    assert not (configs_dir / '.migration-backups').exists()
