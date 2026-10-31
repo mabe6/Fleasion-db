@@ -177,3 +177,135 @@ def test_existing_asset_id_profiles_are_hidden_without_moving_or_rewriting_files
         if window is not None:
             window.close()
         app.processEvents()
+
+def test_original_default_profile_is_not_renamed_or_replaced_on_startup(
+    tmp_path, monkeypatch
+):
+    app = _qapp()
+    config_dir = Path(tmp_path) / 'FleasionOriginalDefault'
+    configs_dir = config_dir / 'configs'
+    configs_dir.mkdir(parents=True)
+    default_path = configs_dir / 'Default.json'
+    original = (
+        b'{\r\n'
+        b'  "replacement_rules": [\r\n'
+        b'    {"name": "original wall", "replace_ids": [12345], "mode": "local", '
+        b'"local_path": "D:/assets/wall.obj"}\r\n'
+        b'  ]\r\n'
+        b'}\r\n'
+    )
+    default_path.write_bytes(original)
+    monkeypatch.setattr(manager_module, 'CONFIG_DIR', config_dir)
+    monkeypatch.setattr(manager_module, 'CONFIG_FILE', config_dir / 'settings.json')
+    monkeypatch.setattr(manager_module, 'CONFIGS_FOLDER', configs_dir)
+
+    window = None
+    try:
+        manager = ConfigManager()
+        window = ReplacerConfigWindow(manager)
+
+        assert default_path.read_bytes() == original
+        assert not (configs_dir / 'Legacy Default.json').exists()
+        assert manager.get_replacement_rules('Default')[0]['name'] == 'original wall'
+        assert 'Default' not in manager.settings['hidden_legacy_replacer_configs']
+        assert 'Default' in window._visible_replacer_config_names()
+        assert window._rando_stuff_tab._legacy_config_combo.findData('Default') >= 0
+    finally:
+        if window is not None:
+            window.close()
+        app.processEvents()
+
+
+def test_previous_migration_restores_original_default_and_preserves_empty_placeholder(
+    tmp_path, monkeypatch
+):
+    app = _qapp()
+    config_dir = Path(tmp_path) / 'FleasionRecoverDefault'
+    configs_dir = config_dir / 'configs'
+    configs_dir.mkdir(parents=True)
+    default_path = configs_dir / 'Default.json'
+    archived_path = configs_dir / 'Legacy Default.json'
+    empty_default = b'{\n  "replacement_rules": []\n}\n'
+    original_default = (
+        b'{\r\n'
+        b'  "replacement_rules": [\r\n'
+        b'    {"name": "restored original", "replace_ids": [777], "mode": "id", '
+        b'"with_id": 888}\r\n'
+        b'  ]\r\n'
+        b'}\r\n'
+    )
+    default_path.write_bytes(empty_default)
+    archived_path.write_bytes(original_default)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / 'settings.json').write_text(
+        json.dumps({
+            'last_config': 'Default',
+            'legacy_default_replacer_archived_v1': True,
+            'legacy_replacer_visibility_initialized_v1': True,
+            'hidden_legacy_replacer_configs': ['Legacy Default'],
+            'show_legacy_replacer_configs': False,
+        }),
+        encoding='utf-8',
+    )
+    monkeypatch.setattr(manager_module, 'CONFIG_DIR', config_dir)
+    monkeypatch.setattr(manager_module, 'CONFIG_FILE', config_dir / 'settings.json')
+    monkeypatch.setattr(manager_module, 'CONFIGS_FOLDER', configs_dir)
+
+    window = None
+    try:
+        manager = ConfigManager()
+        window = ReplacerConfigWindow(manager)
+
+        assert default_path.read_bytes() == original_default
+        assert not archived_path.exists()
+        recovery_copy = configs_dir / '.migration-backups' / 'Default.generated-empty.json'
+        assert recovery_copy.read_bytes() == empty_default
+        assert manager.get_replacement_rules('Default')[0]['name'] == 'restored original'
+        assert 'Legacy Default' not in manager.settings['hidden_legacy_replacer_configs']
+        assert manager.last_config == 'Default'
+        assert window._rando_stuff_tab._legacy_config_combo.findData('Default') >= 0
+    finally:
+        if window is not None:
+            window.close()
+        app.processEvents()
+
+
+def test_recovery_never_overwrites_a_nonempty_current_default(
+    tmp_path, monkeypatch
+):
+    app = _qapp()
+    config_dir = Path(tmp_path) / 'FleasionKeepBothDefaults'
+    configs_dir = config_dir / 'configs'
+    configs_dir.mkdir(parents=True)
+    default_path = configs_dir / 'Default.json'
+    archived_path = configs_dir / 'Legacy Default.json'
+    current_default = (
+        b'{"replacement_rules":[{"name":"current default","replace_ids":[1],'
+        b'"mode":"id","with_id":2}]}'
+    )
+    archived_default = (
+        b'{"replacement_rules":[{"name":"archived default","replace_ids":[3],'
+        b'"mode":"id","with_id":4}]}'
+    )
+    default_path.write_bytes(current_default)
+    archived_path.write_bytes(archived_default)
+    monkeypatch.setattr(manager_module, 'CONFIG_DIR', config_dir)
+    monkeypatch.setattr(manager_module, 'CONFIG_FILE', config_dir / 'settings.json')
+    monkeypatch.setattr(manager_module, 'CONFIGS_FOLDER', configs_dir)
+
+    window = None
+    try:
+        manager = ConfigManager()
+        window = ReplacerConfigWindow(manager)
+
+        assert default_path.read_bytes() == current_default
+        assert archived_path.read_bytes() == archived_default
+        assert not (configs_dir / '.migration-backups').exists()
+        assert manager.get_replacement_rules('Default')[0]['name'] == 'current default'
+        assert window._rando_stuff_tab._legacy_config_combo.findData('Default') >= 0
+        assert window._rando_stuff_tab._legacy_config_combo.findData('Legacy Default') >= 0
+    finally:
+        if window is not None:
+            window.close()
+        app.processEvents()
+
