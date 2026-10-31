@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - CacheSwap
+      - explorer-store-backed
     paths:
       - ".github/workflows/local-db-tests.yml"
       - "src/fleasion/utils/asset_lookup.py"
