@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import requests as _requests
-from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -580,6 +580,31 @@ class _Invoker(QObject):
             log_buffer.log('randostuff', f'invoker error: {exc}')
 
 
+
+
+class _HashFileDumpWorker(QThread):
+    completed = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, source_folder: str, output_folder: str, parent=None):
+        super().__init__(parent)
+        self.source_folder = source_folder
+        self.output_folder = output_folder
+
+    def run(self) -> None:
+        try:
+            from ..database.hash_file_dump import dump_hash_files_from_folder
+
+            report = dump_hash_files_from_folder(
+                self.source_folder,
+                self.output_folder,
+            )
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            return
+        self.completed.emit(report)
+
+
 # Tab widget
 
 
@@ -950,6 +975,16 @@ class RandoStuffTab(QWidget):
         self._hash_open_editor_button.clicked.connect(self._open_hash_replacer)
         hash_asset_buttons.addWidget(self._hash_open_editor_button)
         hash_asset_layout.addLayout(hash_asset_buttons)
+
+        dump_row = QHBoxLayout()
+        self._hash_dump_button = QPushButton("Dump all hash files from folder…")
+        self._hash_dump_button.clicked.connect(self._dump_hash_files_from_folder)
+        dump_row.addWidget(self._hash_dump_button)
+        dump_row.addWidget(QLabel(
+            "Copies cache entries or hash-named files into a separate folder with a manifest."
+        ), 1)
+        hash_asset_layout.addLayout(dump_row)
+        self._hash_dump_worker: _HashFileDumpWorker | None = None
         self._hash_asset_status = QLabel(
             f"Library: {self._hash_asset_store.assets_dir}"
         )
@@ -1352,6 +1387,75 @@ class RandoStuffTab(QWidget):
         self._username_self_game_creator_chk.toggled.connect(
             lambda _checked: self._on_username_spoofer_changed()
         )
+
+    def _dump_hash_files_from_folder(self) -> None:
+        if self._hash_dump_worker is not None and self._hash_dump_worker.isRunning():
+            return
+
+        initial_source = ""
+        if self._cache_store is not None:
+            initial_source = str(getattr(self._cache_store, "root", ""))
+        source = QFileDialog.getExistingDirectory(
+            self,
+            "Choose a Roblox cache root or folder containing hash-named files",
+            initial_source,
+        )
+        if not source:
+            return
+
+        output_initial = str(Path(source).parent)
+        output = QFileDialog.getExistingDirectory(
+            self,
+            "Choose where to save the hash-file dump",
+            output_initial,
+        )
+        if not output:
+            return
+
+        worker = _HashFileDumpWorker(source, output, self)
+        self._hash_dump_worker = worker
+        worker.completed.connect(self._on_hash_file_dump_completed)
+        worker.failed.connect(self._on_hash_file_dump_failed)
+        worker.finished.connect(worker.deleteLater)
+        app = QApplication.instance()
+        if app is not None:
+            # Keep shutdown safe if the user closes Fleasion during a large dump.
+            self.destroyed.connect(lambda *_args, active=worker: active.wait())
+        self._hash_dump_button.setEnabled(False)
+        self._hash_asset_status.setText(
+            "Dumping hash files… The source files are read-only and will not be changed."
+        )
+        worker.start()
+
+    def _on_hash_file_dump_completed(self, report: dict) -> None:
+        self._hash_dump_worker = None
+        self._hash_dump_button.setEnabled(True)
+        output = str(report["output_folder"])
+        type_counts = report.get("detected_types", {})
+        types_text = ", ".join(
+            f"{name}: {count}" for name, count in sorted(type_counts.items())
+        ) or "No types detected"
+        message = (
+            f"Dumped {report['file_count']:,} file(s), "
+            f"{report['total_bytes']:,} bytes.\\n\\n"
+            f"Detected types: {types_text}\\n\\n"
+            f"Output: {output}"
+        )
+        errors = report.get("errors", [])
+        if errors:
+            message += f"\\n\\nSkipped {len(errors):,} file(s): " + " | ".join(errors[:5])
+        self._hash_asset_status.setText(
+            f"Dump complete: {report['file_count']:,} file(s) in {output}"
+        )
+        log_buffer.log("HashReplacer", message)
+        QMessageBox.information(self, "Hash-file dump complete", message)
+
+    def _on_hash_file_dump_failed(self, message: str) -> None:
+        self._hash_dump_worker = None
+        self._hash_dump_button.setEnabled(True)
+        self._hash_asset_status.setText(f"Hash-file dump failed: {message}")
+        log_buffer.log("HashReplacer", f"Hash-file dump failed: {message}")
+        QMessageBox.warning(self, "Hash-file dump failed", message)
 
     def _import_hash_asset_files(self) -> None:
         paths, _filter = QFileDialog.getOpenFileNames(
