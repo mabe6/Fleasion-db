@@ -1,5 +1,8 @@
 > [!IMPORTANT]
-> Btw everything is happening in the branches rn when it's done i will push it
+> READ ME
+>
+> Do to there being a fix
+> to existing fleasion i am stoping development till another roblox patch.
 > 
 > Roblox has patched the original Fleasion, and its proxy functionality currently does not work. **Fleasion-db** is a community-driven fork focused on improving asset previews, animation tools, external asset importing, and cache management.
 >
